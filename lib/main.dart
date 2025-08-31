@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const AmorApp());
@@ -33,6 +35,12 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _nameController = TextEditingController();
 
   @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Login')),
@@ -50,10 +58,17 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: () {
+                final name = _nameController.text.trim();
+                if (name.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Por favor, ingresa tu nombre.')),
+                  );
+                  return;
+                }
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => MainScreen(userName: _nameController.text),
+                    builder: (context) => MainScreen(userName: name),
                   ),
                 );
               },
@@ -78,16 +93,41 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   final TextEditingController _partnerIdController = TextEditingController();
   String? _userId;
-  List<Map<String, String>> messageHistory = [];
+  List<Message> messageHistory = [];
   List<Widget> _floatingHearts = [];
 
   @override
   void initState() {
     super.initState();
     _userId = const Uuid().v4();
+    _loadMessages();
   }
 
-  Future<void> sendMessage(String type) async {
+  @override
+  void dispose() {
+    _partnerIdController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMessages() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList('messageHistory');
+    if (raw != null) {
+      setState(() {
+        messageHistory = raw.map((e) => Message.fromJson(e)).toList();
+      });
+    }
+  }
+
+  Future<void> _saveMessages() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      'messageHistory',
+      messageHistory.map((m) => m.toJson()).toList(),
+    );
+  }
+
+  Future<void> sendMessage(MessageType type) async {
     // Cuando Firebase esté configurado, descomenta e implementa:
     // await FirebaseFirestore.instance.collection('mensajes').add({
     //   'sender': widget.userName,
@@ -96,38 +136,42 @@ class _MainScreenState extends State<MainScreen> {
     // });
 
     setState(() {
-      messageHistory.insert(0, {
-        'type': type,
-        'sender': widget.userName,
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+      messageHistory.insert(
+        0,
+        Message(
+          type: type,
+          sender: widget.userName,
+          timestamp: DateTime.now(),
+        ),
+      );
     });
+    await _saveMessages();
 
-    if (type == 'abrazo') {
+    if (type == MessageType.abrazo) {
       _showFloatingHeart();
     }
-    if (type == 'beso') {
+    if (type == MessageType.beso) {
       HapticFeedback.heavyImpact();
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('¡${type == 'abrazo' ? 'Abrazo' : 'Beso'} enviado!'),
+        content: Text('¡${type == MessageType.abrazo ? 'Abrazo' : 'Beso'} enviado!'),
         backgroundColor: Colors.pink,
       ),
     );
   }
 
   void _showFloatingHeart() {
+    final key = UniqueKey();
     final heart = Positioned(
+      key: key,
       left: Random().nextDouble() * MediaQuery.of(context).size.width * 0.8,
       bottom: 80,
       child: _AnimatedHeart(
         onEnd: () {
           setState(() {
-            if (_floatingHearts.isNotEmpty) {
-              _floatingHearts.removeAt(0);
-            }
+            _floatingHearts.removeWhere((w) => w.key == key);
           });
         },
       ),
@@ -157,7 +201,31 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    Text('Tu ID única: ${_userId ?? ""}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Tu ID única: ${_userId ?? ""}',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Copiar ID',
+                          icon: const Icon(Icons.copy, size: 18),
+                          onPressed: (_userId == null || _userId!.isEmpty)
+                              ? null
+                              : () async {
+                                  await Clipboard.setData(ClipboardData(text: _userId!));
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('ID copiada al portapapeles')),
+                                    );
+                                  }
+                                },
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -168,11 +236,11 @@ class _MainScreenState extends State<MainScreen> {
                     final msg = messageHistory[index];
                     return ListTile(
                       leading: Icon(
-                        msg['type'] == 'abrazo' ? Icons.favorite : Icons.favorite_border,
-                        color: msg['type'] == 'abrazo' ? Colors.pink : Colors.red,
+                        msg.type == MessageType.abrazo ? Icons.favorite : Icons.favorite_border,
+                        color: msg.type == MessageType.abrazo ? Colors.pink : Colors.red,
                       ),
-                      title: Text('${msg['type'] == 'abrazo' ? 'Abrazo' : 'Beso'} enviado'),
-                      subtitle: Text('Fecha: ${msg['timestamp']!.substring(0, 19).replaceFirst("T", " ")}'),
+                      title: Text('${msg.type == MessageType.abrazo ? 'Abrazo' : 'Beso'} enviado'),
+                      subtitle: Text('Fecha: ${msg.timestamp.toLocal().toString().substring(0, 19)}'),
                     );
                   },
                 ),
@@ -183,11 +251,11 @@ class _MainScreenState extends State<MainScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     ElevatedButton(
-                      onPressed: () => sendMessage('abrazo'),
+                      onPressed: () => sendMessage(MessageType.abrazo),
                       child: const Text('Enviar Abrazo'),
                     ),
                     ElevatedButton(
-                      onPressed: () => sendMessage('beso'),
+                      onPressed: () => sendMessage(MessageType.beso),
                       child: const Text('Enviar Beso'),
                     ),
                   ],
@@ -253,4 +321,32 @@ class _AnimatedHeartState extends State<_AnimatedHeart> with SingleTickerProvide
       },
     );
   }
+}
+
+enum MessageType { abrazo, beso }
+
+class Message {
+  final MessageType type;
+  final String sender;
+  final DateTime timestamp;
+
+  Message({required this.type, required this.sender, required this.timestamp});
+
+  Map<String, dynamic> toMap() => {
+        'type': type.name,
+        'sender': sender,
+        'timestamp': timestamp.toIso8601String(),
+      };
+
+  factory Message.fromMap(Map<String, dynamic> map) => Message(
+        type: MessageType.values.firstWhere(
+          (e) => e.name == map['type'],
+          orElse: () => MessageType.abrazo,
+        ),
+        sender: map['sender'] as String,
+        timestamp: DateTime.parse(map['timestamp'] as String),
+      );
+
+  String toJson() => jsonEncode(toMap());
+  factory Message.fromJson(String source) => Message.fromMap(jsonDecode(source) as Map<String, dynamic>);
 }
