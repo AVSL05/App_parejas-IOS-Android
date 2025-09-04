@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "464935510828",
+    "project_id": "amor-app-parejas",
+    "storage_bucket": "amor-app-parejas.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:464935510828:android:1d164c602fe7f3d42d0289",
+        "android_client_info": {
+          "package_name": "com.example.amor_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBLn1OIJEn-7j5SH_STjJeKQqtXGUuMvWI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
