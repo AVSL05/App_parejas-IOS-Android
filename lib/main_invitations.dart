@@ -167,54 +167,14 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   final TextEditingController _partnerIdController = TextEditingController();
   String? _userId;
   bool _isLoading = false;
+  List<Map<String, dynamic>> _pendingInvitations = [];
 
   @override
   void initState() {
     super.initState();
     _userId = FirebaseAuth.instance.currentUser?.uid;
     _checkExistingConnection();
-    _listenForAcceptedInvitations();
-  }
-
-  void _listenForAcceptedInvitations() {
-    if (_userId == null) return;
-    
-    // Escuchar invitaciones enviadas por este usuario que sean aceptadas
-    FirebaseFirestore.instance
-        .collection('invitations')
-        .where('senderId', isEqualTo: _userId)
-        .where('status', isEqualTo: 'accepted')
-        .snapshots()
-        .listen((snapshot) {
-      if (snapshot.docs.isNotEmpty && mounted) {
-        // Si hay una invitación aceptada, navegar al MainScreen
-        final invitation = snapshot.docs.first.data();
-        final receiverId = invitation['receiverId'];
-        final receiverName = invitation['receiverName'] ?? 'Usuario';
-        
-        // Crear el pairId ordenado alfabéticamente
-        final sortedIds = [_userId!, receiverId]..sort();
-        final pairId = '${sortedIds[0]}_${sortedIds[1]}';
-        
-        // Guardar la información localmente
-        SharedPreferences.getInstance().then((prefs) {
-          prefs.setString('partnerId', receiverId);
-          prefs.setString('pairId', pairId);
-        });
-        
-        // Navegar al MainScreen
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => MainScreen(
-              userName: widget.userName,
-              partnerId: receiverId,
-              pairId: pairId,
-            ),
-          ),
-        );
-      }
-    });
+    _loadPendingInvitations();
   }
 
   Future<void> _checkExistingConnection() async {
@@ -247,126 +207,30 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     }
   }
 
-  Widget _buildPendingInvitations() {
-    if (_userId == null) return SizedBox.shrink();
+  Future<void> _loadPendingInvitations() async {
+    if (_userId == null) return;
     
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
+    try {
+      final invitationsSnapshot = await FirebaseFirestore.instance
           .collection('invitations')
           .where('receiverId', isEqualTo: _userId)
           .where('status', isEqualTo: 'pending')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          print('Error en stream de invitaciones: ${snapshot.error}');
-          return SizedBox.shrink();
-        }
-        
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(child: CircularProgressIndicator());
-        }
-        
-        final invitations = snapshot.data?.docs ?? [];
-        
-        if (invitations.isEmpty) {
-          return SizedBox.shrink();
-        }
-        
-        return Column(
-          children: [
-            Text(
-              'Invitaciones Pendientes',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFFD81B60)),
-            ),
-            SizedBox(height: 15),
-            
-            ...invitations.map((doc) {
-              final invitation = doc.data() as Map<String, dynamic>;
-              final invitationId = doc.id;
-              
-              return Container(
-                margin: EdgeInsets.only(bottom: 10),
-                padding: EdgeInsets.all(15),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(15),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withOpacity(0.1),
-                      blurRadius: 5,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Invitación de ${invitation['senderName'] ?? 'Usuario'}',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFD81B60)),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'ID: ${invitation['senderId']}',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600], fontFamily: 'monospace'),
-                    ),
-                    SizedBox(height: 15),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _isLoading ? null : () => _acceptInvitation(
-                              invitationId,
-                              invitation['senderId'],
-                              invitation['senderName'] ?? 'Usuario',
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            ),
-                            child: Text('Aceptar', style: TextStyle(color: Colors.white)),
-                          ),
-                        ),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _isLoading ? null : () => _rejectInvitation(invitationId),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            ),
-                            child: Text('Rechazar', style: TextStyle(color: Colors.white)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              );
-            }).toList(),
-          ],
-        );
-      },
-    );
-  }
+          .get();
 
-  Future<void> _rejectInvitation(String invitationId) async {
-    try {
-      await FirebaseFirestore.instance
-          .collection('invitations')
-          .doc(invitationId)
-          .update({
-        'status': 'rejected',
-        'rejectedAt': FieldValue.serverTimestamp(),
-      });
+      final invitations = <Map<String, dynamic>>[];
+      for (var doc in invitationsSnapshot.docs) {
+        final data = doc.data();
+        data['id'] = doc.id;
+        invitations.add(data);
+      }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Invitación rechazada'), backgroundColor: Colors.orange),
-      );
+      if (mounted) {
+        setState(() {
+          _pendingInvitations = invitations;
+        });
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
+      print('Error cargando invitaciones: $e');
     }
   }
 
@@ -424,14 +288,13 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       final sortedIds = [_userId!, senderId]..sort();
       final pairId = '${sortedIds[0]}_${sortedIds[1]}';
 
-      // Actualizar la invitación como aceptada e incluir el nombre del receptor
+      // Actualizar la invitación como aceptada
       await FirebaseFirestore.instance
           .collection('invitations')
           .doc(invitationId)
           .update({
         'status': 'accepted',
         'acceptedAt': FieldValue.serverTimestamp(),
-        'receiverName': widget.userName, // Agregar el nombre del que acepta
       });
 
       // Crear el documento de pareja
@@ -631,8 +494,76 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                 
                 SizedBox(height: 30),
                 
-                // Invitaciones pendientes (usando StreamBuilder para tiempo real)
-                _buildPendingInvitations(),
+                // Invitaciones pendientes
+                if (_pendingInvitations.isNotEmpty) ...[
+                  Text(
+                    'Invitaciones Pendientes',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFFD81B60)),
+                  ),
+                  SizedBox(height: 15),
+                  
+                  ..._pendingInvitations.map((invitation) => Container(
+                    margin: EdgeInsets.only(bottom: 10),
+                    padding: EdgeInsets.all(15),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          blurRadius: 5,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Invitación de ${invitation['senderName']}',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFD81B60)),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'ID: ${invitation['senderId']}',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600], fontFamily: 'monospace'),
+                        ),
+                        SizedBox(height: 15),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: _isLoading ? null : () => _acceptInvitation(
+                                  invitation['id'],
+                                  invitation['senderId'],
+                                  invitation['senderName'],
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                child: Text('Aceptar', style: TextStyle(color: Colors.white)),
+                              ),
+                            ),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: _isLoading ? null : () {
+                                  // Rechazar invitación
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                child: Text('Rechazar', style: TextStyle(color: Colors.white)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  )).toList(),
+                ],
                 
                 SizedBox(height: 30),
               ],

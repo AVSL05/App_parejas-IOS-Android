@@ -1,1 +1,44 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"amor-app-parejas","appId":"1:464935510828:android:1d164c602fe7f3d42d0289","fileOutput":"android/app/google-services.json"}},"ios":{"default":{"projectId":"amor-app-parejas","appId":"1:464935510828:ios:4d627bee1b0d58642d0289","uploadDebugSymbols":false,"fileOutput":"ios/Runner/GoogleService-Info.plist"}},"macos":{"default":{"projectId":"amor-app-parejas","appId":"1:464935510828:ios:4d627bee1b0d58642d0289","uploadDebugSymbols":false,"fileOutput":"macos/Runner/GoogleService-Info.plist"}},"dart":{"lib/firebase_options.dart":{"projectId":"amor-app-parejas","configurations":{"android":"1:464935510828:android:1d164c602fe7f3d42d0289","ios":"1:464935510828:ios:4d627bee1b0d58642d0289","macos":"1:464935510828:ios:4d627bee1b0d58642d0289","web":"1:464935510828:web:bd1a7aa9b1ac8f512d0289","windows":"1:464935510828:web:5469786690a82c602d0289"}}}}}}
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "amor-app-parejas",
+          "appId": "1:464935510828:android:1d164c602fe7f3d42d0289",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "amor-app-parejas",
+          "appId": "1:464935510828:ios:4d627bee1b0d58642d0289",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "macos": {
+        "default": {
+          "projectId": "amor-app-parejas",
+          "appId": "1:464935510828:ios:4d627bee1b0d58642d0289",
+          "uploadDebugSymbols": false,
+          "fileOutput": "macos/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "amor-app-parejas",
+          "configurations": {
+            "android": "1:464935510828:android:1d164c602fe7f3d42d0289",
+            "ios": "1:464935510828:ios:4d627bee1b0d58642d0289",
+            "macos": "1:464935510828:ios:4d627bee1b0d58642d0289",
+            "web": "1:464935510828:web:bd1a7aa9b1ac8f512d0289",
+            "windows": "1:464935510828:web:5469786690a82c602d0289"
+          }
+        }
+      }
+    }
+  }
+}
