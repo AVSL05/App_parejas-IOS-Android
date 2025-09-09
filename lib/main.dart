@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:math';
 import 'firebase_options.dart';
 
@@ -17,6 +17,8 @@ void main() async {
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -32,6 +34,8 @@ class MyApp extends StatelessWidget {
 }
 
 class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
@@ -52,6 +56,8 @@ class AuthWrapper extends StatelessWidget {
 }
 
 class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
@@ -157,7 +163,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
 class ConnectionScreen extends StatefulWidget {
   final String userName;
-  const ConnectionScreen({required this.userName});
+  const ConnectionScreen({super.key, required this.userName});
 
   @override
   State<ConnectionScreen> createState() => _ConnectionScreenState();
@@ -190,7 +196,6 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
         // Si hay una invitación aceptada, navegar al MainScreen
         final invitation = snapshot.docs.first.data();
         final receiverId = invitation['receiverId'];
-        final receiverName = invitation['receiverName'] ?? 'Usuario';
         
         // Crear el pairId ordenado alfabéticamente
         final sortedIds = [_userId!, receiverId]..sort();
@@ -242,7 +247,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
           );
         }
       } catch (e) {
-        print('Error verificando conexión: $e');
+        // Error verificando conexión: $e
+        debugPrint('Error verificando conexión: $e');
       }
     }
   }
@@ -258,7 +264,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          print('Error en stream de invitaciones: ${snapshot.error}');
+          debugPrint('Error en stream de invitaciones: ${snapshot.error}');
           return SizedBox.shrink();
         }
         
@@ -292,7 +298,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                   borderRadius: BorderRadius.circular(15),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.grey.withOpacity(0.1),
+                      color: Colors.grey.withValues(alpha: 0.1),
                       blurRadius: 5,
                       offset: Offset(0, 2),
                     ),
@@ -367,6 +373,40 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
       );
+    }
+  }
+
+  Future<void> _shareUserId() async {
+    if (_userId == null) return;
+    
+    final shareText = '''¡Hola! 💕
+
+¿Quieres conectarte conmigo en nuestra app de amor?
+
+Mi ID único es: $_userId
+
+1. Descarga la app "Amor App" 
+2. Ingresa mi ID para enviarme una invitación
+3. ¡Podremos enviarnos abrazos y besos virtuales! 🤗💋
+
+¡Te espero! ❤️''';
+
+    try {
+      await Share.share(
+        shareText,
+        subject: '💕 Conectémonos en Amor App',
+      );
+    } catch (e) {
+      // Si Share.share falla, copiamos al portapapeles como fallback
+      await Clipboard.setData(ClipboardData(text: _userId!));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('ID copiado al portapapeles'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     }
   }
 
@@ -597,31 +637,62 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                     children: [
                       Text('Tu ID único', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.blue[700])),
                       SizedBox(height: 8),
-                      GestureDetector(
-                        onTap: () {
-                          Clipboard.setData(ClipboardData(text: _userId ?? ''));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('ID copiado'), backgroundColor: Colors.green),
-                          );
-                        },
-                        child: Container(
-                          padding: EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _userId ?? 'Cargando...',
-                                  style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.blue[800], fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                              Icon(Icons.copy, size: 16, color: Colors.blue[600]),
-                            ],
-                          ),
+                      Container(
+                        padding: EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue.withOpacity(0.2)),
                         ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _userId ?? 'Cargando...',
+                                style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.blue[800], fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: _userId ?? ''));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('ID copiado al portapapeles'), backgroundColor: Colors.green),
+                                );
+                              },
+                              icon: Icon(Icons.copy, size: 16),
+                              label: Text('Copiar'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue[100],
+                                foregroundColor: Colors.blue[700],
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: _shareUserId,
+                              icon: Icon(Icons.share, size: 16),
+                              label: Text('Compartir'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green[100],
+                                foregroundColor: Colors.green[700],
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       SizedBox(height: 8),
                       Text('Comparte este ID con tu pareja', style: TextStyle(fontSize: 11, color: Colors.blue[600])),
@@ -653,6 +724,7 @@ class MainScreen extends StatefulWidget {
   final String pairId;
 
   const MainScreen({
+    super.key,
     required this.userName,
     required this.partnerId,
     required this.pairId,
@@ -933,7 +1005,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 class _AnimatedHeart extends StatefulWidget {
   final VoidCallback onEnd;
 
-  const _AnimatedHeart({required this.onEnd});
+  const _AnimatedHeart({super.key, required this.onEnd});
 
   @override
   _AnimatedHeartState createState() => _AnimatedHeartState();

@@ -13,7 +13,7 @@ import 'package:amor_app/main.dart';
 void main() {
   testWidgets('Amor app smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const AmorApp());
+    await tester.pumpWidget(const MyApp());
 
     // Verify that the login screen appears
     expect(find.text('💕 Bienvenido a Amor App 💕'), findsOneWidget);
