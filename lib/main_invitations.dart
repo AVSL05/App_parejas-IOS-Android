@@ -3,58 +3,20 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:math';
-import 'dart:async';
 import 'firebase_options.dart';
-
-// 🔔 Plugin de notificaciones locales
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = 
-    FlutterLocalNotificationsPlugin();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  
-  // 🔔 Inicializar notificaciones locales
-  await _initializeLocalNotifications();
-  
   runApp(MyApp());
 }
 
-// 🔔 Configurar notificaciones locales
-Future<void> _initializeLocalNotifications() async {
-  const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-      
-  const DarwinInitializationSettings initializationSettingsIOS =
-      DarwinInitializationSettings(
-    requestAlertPermission: true,
-    requestBadgePermission: true,
-    requestSoundPermission: true,
-  );
-  
-  const InitializationSettings initializationSettings = InitializationSettings(
-    android: initializationSettingsAndroid,
-    iOS: initializationSettingsIOS,
-  );
-  
-  await flutterLocalNotificationsPlugin.initialize(
-    initializationSettings,
-    onDidReceiveNotificationResponse: (NotificationResponse response) async {
-      // Manejar cuando el usuario toca la notificación
-      debugPrint('🔔 Notificación tocada: ${response.payload}');
-    },
-  );
-}
-
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -70,8 +32,6 @@ class MyApp extends StatelessWidget {
 }
 
 class AuthWrapper extends StatelessWidget {
-  const AuthWrapper({super.key});
-
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
@@ -92,8 +52,6 @@ class AuthWrapper extends StatelessWidget {
 }
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
-
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
@@ -199,7 +157,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
 class ConnectionScreen extends StatefulWidget {
   final String userName;
-  const ConnectionScreen({super.key, required this.userName});
+  const ConnectionScreen({required this.userName});
 
   @override
   State<ConnectionScreen> createState() => _ConnectionScreenState();
@@ -209,53 +167,14 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   final TextEditingController _partnerIdController = TextEditingController();
   String? _userId;
   bool _isLoading = false;
+  List<Map<String, dynamic>> _pendingInvitations = [];
 
   @override
   void initState() {
     super.initState();
     _userId = FirebaseAuth.instance.currentUser?.uid;
     _checkExistingConnection();
-    _listenForAcceptedInvitations();
-  }
-
-  void _listenForAcceptedInvitations() {
-    if (_userId == null) return;
-    
-    // Escuchar invitaciones enviadas por este usuario que sean aceptadas
-    FirebaseFirestore.instance
-        .collection('invitations')
-        .where('senderId', isEqualTo: _userId)
-        .where('status', isEqualTo: 'accepted')
-        .snapshots()
-        .listen((snapshot) {
-      if (snapshot.docs.isNotEmpty && mounted) {
-        // Si hay una invitación aceptada, navegar al MainScreen
-        final invitation = snapshot.docs.first.data();
-        final receiverId = invitation['receiverId'];
-        
-        // Crear el pairId ordenado alfabéticamente
-        final sortedIds = [_userId!, receiverId]..sort();
-        final pairId = '${sortedIds[0]}_${sortedIds[1]}';
-        
-        // Guardar la información localmente
-        SharedPreferences.getInstance().then((prefs) {
-          prefs.setString('partnerId', receiverId);
-          prefs.setString('pairId', pairId);
-        });
-        
-        // Navegar al MainScreen
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => MainScreen(
-              userName: widget.userName,
-              partnerId: receiverId,
-              pairId: pairId,
-            ),
-          ),
-        );
-      }
-    });
+    _loadPendingInvitations();
   }
 
   Future<void> _checkExistingConnection() async {
@@ -283,166 +202,35 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
           );
         }
       } catch (e) {
-        // Error verificando conexión: $e
-        debugPrint('Error verificando conexión: $e');
+        print('Error verificando conexión: $e');
       }
     }
   }
 
-  Widget _buildPendingInvitations() {
-    if (_userId == null) return SizedBox.shrink();
+  Future<void> _loadPendingInvitations() async {
+    if (_userId == null) return;
     
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
+    try {
+      final invitationsSnapshot = await FirebaseFirestore.instance
           .collection('invitations')
           .where('receiverId', isEqualTo: _userId)
           .where('status', isEqualTo: 'pending')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          debugPrint('Error en stream de invitaciones: ${snapshot.error}');
-          return SizedBox.shrink();
-        }
-        
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(child: CircularProgressIndicator());
-        }
-        
-        final invitations = snapshot.data?.docs ?? [];
-        
-        if (invitations.isEmpty) {
-          return SizedBox.shrink();
-        }
-        
-        return Column(
-          children: [
-            Text(
-              'Invitaciones Pendientes',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFFD81B60)),
-            ),
-            SizedBox(height: 15),
-            
-            ...invitations.map((doc) {
-              final invitation = doc.data() as Map<String, dynamic>;
-              final invitationId = doc.id;
-              
-              return Container(
-                margin: EdgeInsets.only(bottom: 10),
-                padding: EdgeInsets.all(15),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(15),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withValues(alpha: 0.1),
-                      blurRadius: 5,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Invitación de ${invitation['senderName'] ?? 'Usuario'}',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFD81B60)),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'ID: ${invitation['senderId']}',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600], fontFamily: 'monospace'),
-                    ),
-                    SizedBox(height: 15),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _isLoading ? null : () => _acceptInvitation(
-                              invitationId,
-                              invitation['senderId'],
-                              invitation['senderName'] ?? 'Usuario',
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            ),
-                            child: Text('Aceptar', style: TextStyle(color: Colors.white)),
-                          ),
-                        ),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _isLoading ? null : () => _rejectInvitation(invitationId),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            ),
-                            child: Text('Rechazar', style: TextStyle(color: Colors.white)),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              );
-            }).toList(),
-          ],
-        );
-      },
-    );
-  }
+          .get();
 
-  Future<void> _rejectInvitation(String invitationId) async {
-    try {
-      await FirebaseFirestore.instance
-          .collection('invitations')
-          .doc(invitationId)
-          .update({
-        'status': 'rejected',
-        'rejectedAt': FieldValue.serverTimestamp(),
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Invitación rechazada'), backgroundColor: Colors.orange),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  Future<void> _shareUserId() async {
-    if (_userId == null) return;
-    
-    final shareText = '''¡Hola! 💕
-
-¿Quieres conectarte conmigo en nuestra app de amor?
-
-Mi ID único es: $_userId
-
-1. Descarga la app "Amor App" 
-2. Ingresa mi ID para enviarme una invitación
-3. ¡Podremos enviarnos abrazos y besos virtuales! 🤗💋
-
-¡Te espero! ❤️''';
-
-    try {
-      await Share.share(
-        shareText,
-        subject: '💕 Conectémonos en Amor App',
-      );
-    } catch (e) {
-      // Si Share.share falla, copiamos al portapapeles como fallback
-      await Clipboard.setData(ClipboardData(text: _userId!));
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('ID copiado al portapapeles'),
-            backgroundColor: Colors.green,
-          ),
-        );
+      final invitations = <Map<String, dynamic>>[];
+      for (var doc in invitationsSnapshot.docs) {
+        final data = doc.data();
+        data['id'] = doc.id;
+        invitations.add(data);
       }
+
+      if (mounted) {
+        setState(() {
+          _pendingInvitations = invitations;
+        });
+      }
+    } catch (e) {
+      print('Error cargando invitaciones: $e');
     }
   }
 
@@ -500,14 +288,13 @@ Mi ID único es: $_userId
       final sortedIds = [_userId!, senderId]..sort();
       final pairId = '${sortedIds[0]}_${sortedIds[1]}';
 
-      // Actualizar la invitación como aceptada e incluir el nombre del receptor
+      // Actualizar la invitación como aceptada
       await FirebaseFirestore.instance
           .collection('invitations')
           .doc(invitationId)
           .update({
         'status': 'accepted',
         'acceptedAt': FieldValue.serverTimestamp(),
-        'receiverName': widget.userName, // Agregar el nombre del que acepta
       });
 
       // Crear el documento de pareja
@@ -673,62 +460,31 @@ Mi ID único es: $_userId
                     children: [
                       Text('Tu ID único', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.blue[700])),
                       SizedBox(height: 8),
-                      Container(
-                        padding: EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.blue.withOpacity(0.2)),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _userId ?? 'Cargando...',
-                                style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.blue[800], fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () {
-                                Clipboard.setData(ClipboardData(text: _userId ?? ''));
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('ID copiado al portapapeles'), backgroundColor: Colors.green),
-                                );
-                              },
-                              icon: Icon(Icons.copy, size: 16),
-                              label: Text('Copiar'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue[100],
-                                foregroundColor: Colors.blue[700],
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                padding: EdgeInsets.symmetric(vertical: 8),
-                              ),
-                            ),
+                      GestureDetector(
+                        onTap: () {
+                          Clipboard.setData(ClipboardData(text: _userId ?? ''));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('ID copiado'), backgroundColor: Colors.green),
+                          );
+                        },
+                        child: Container(
+                          padding: EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
                           ),
-                          SizedBox(width: 10),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: _shareUserId,
-                              icon: Icon(Icons.share, size: 16),
-                              label: Text('Compartir'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green[100],
-                                foregroundColor: Colors.green[700],
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _userId ?? 'Cargando...',
+                                  style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.blue[800], fontWeight: FontWeight.bold),
+                                ),
                               ),
-                            ),
+                              Icon(Icons.copy, size: 16, color: Colors.blue[600]),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                       SizedBox(height: 8),
                       Text('Comparte este ID con tu pareja', style: TextStyle(fontSize: 11, color: Colors.blue[600])),
@@ -738,8 +494,76 @@ Mi ID único es: $_userId
                 
                 SizedBox(height: 30),
                 
-                // Invitaciones pendientes (usando StreamBuilder para tiempo real)
-                _buildPendingInvitations(),
+                // Invitaciones pendientes
+                if (_pendingInvitations.isNotEmpty) ...[
+                  Text(
+                    'Invitaciones Pendientes',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFFD81B60)),
+                  ),
+                  SizedBox(height: 15),
+                  
+                  ..._pendingInvitations.map((invitation) => Container(
+                    margin: EdgeInsets.only(bottom: 10),
+                    padding: EdgeInsets.all(15),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          blurRadius: 5,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Invitación de ${invitation['senderName']}',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFFD81B60)),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'ID: ${invitation['senderId']}',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600], fontFamily: 'monospace'),
+                        ),
+                        SizedBox(height: 15),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: _isLoading ? null : () => _acceptInvitation(
+                                  invitation['id'],
+                                  invitation['senderId'],
+                                  invitation['senderName'],
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                child: Text('Aceptar', style: TextStyle(color: Colors.white)),
+                              ),
+                            ),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: _isLoading ? null : () {
+                                  // Rechazar invitación
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                child: Text('Rechazar', style: TextStyle(color: Colors.white)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  )).toList(),
+                ],
                 
                 SizedBox(height: 30),
               ],
@@ -760,7 +584,6 @@ class MainScreen extends StatefulWidget {
   final String pairId;
 
   const MainScreen({
-    super.key,
     required this.userName,
     required this.partnerId,
     required this.pairId,
@@ -770,12 +593,10 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> 
-    with TickerProviderStateMixin, WidgetsBindingObserver {
+class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   final List<Widget> _floatingHearts = [];
   late AnimationController _pulseController;
   String? _userId;
-  bool _isAppInBackground = false;
 
   @override
   void initState() {
@@ -785,240 +606,16 @@ class _MainScreenState extends State<MainScreen>
       duration: Duration(milliseconds: 800),
       vsync: this,
     );
-    
-    // 🔔 Observar cambios de estado de la app
-    WidgetsBinding.instance.addObserver(this);
-    
-    _setupInstantMessaging(); // 🚀 Sistema instantáneo
-    _listenForNotifications();
-  }
-
-  // 🔔 Detectar cuando la app va a background/foreground
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
-    _isAppInBackground = state != AppLifecycleState.resumed;
-    debugPrint('🔔 App state: $state, Background: $_isAppInBackground');
-  }
-
-  // 🚀 Sistema de mensajes instantáneos (sin Apple)
-  void _setupInstantMessaging() {
-    // Escuchar mensajes en tiempo real - INSTANTÁNEO
-    FirebaseFirestore.instance
-        .collection('pairs')
-        .doc(widget.pairId)
-        .collection('instant_notifications')
-        .where('receiverId', isEqualTo: _userId)
-        .where('status', isEqualTo: 'pending')
-        .snapshots()
-        .listen((snapshot) {
-      
-      for (var docChange in snapshot.docChanges) {
-        if (docChange.type == DocumentChangeType.added) {
-          Map<String, dynamic> notification = docChange.doc.data() as Map<String, dynamic>;
-          
-          // 🎯 Mostrar notificación INSTANTÁNEA
-          _showInstantLocalNotification(notification);
-          
-          // 📱 Vibración y efectos
-          HapticFeedback.lightImpact();
-          
-          // ✅ Marcar como vista
-          docChange.doc.reference.update({'status': 'delivered'});
-        }
-      }
-    });
-    
-    debugPrint('🚀 Sistema de mensajería instantánea activado');
-  }
-  
-  // 📱 Mostrar notificación local instantánea
-  void _showInstantLocalNotification(Map<String, dynamic> notification) async {
-    String type = notification['type'] ?? 'abrazo';
-    String senderName = notification['senderName'] ?? 'Tu pareja';
-    
-    // 🔔 Si la app está en background, mostrar notificación nativa
-    if (_isAppInBackground) {
-      await _showNativeNotification(type, senderName);
-      return;
-    }
-    
-    // 🎨 Crear notificación visual hermosa (solo si la app está activa)
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.pink[50],
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        content: Container(
-          padding: EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 💕 Icono animado
-              TweenAnimationBuilder(
-                duration: Duration(milliseconds: 500),
-                tween: Tween<double>(begin: 0.5, end: 1.2),
-                builder: (context, double scale, child) {
-                  return Transform.scale(
-                    scale: scale,
-                    child: Text(
-                      type == 'abrazo' ? '🤗' : '💋',
-                      style: TextStyle(fontSize: 60),
-                    ),
-                  );
-                },
-              ),
-              SizedBox(height: 16),
-              Text(
-                type == 'abrazo' ? '¡Abrazo recibido!' : '¡Beso recibido!',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.pink[800],
-                ),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: 8),
-              Text(
-                '$senderName te envió mucho amor 💕',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.pink[600],
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('💕 Recibido', style: TextStyle(color: Colors.pink)),
-          ),
-        ],
-      ),
-    );
-    
-    // 📱 SnackBar de respaldo
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Text(type == 'abrazo' ? '🤗' : '💋', style: TextStyle(fontSize: 24)),
-            SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                type == 'abrazo' ? '¡Abrazo de $senderName!' : '¡Beso de $senderName!',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: Colors.pink,
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        duration: Duration(seconds: 3),
-      ),
-    );
-  }
-
-  // Escuchar notificaciones push entrantes
-  void _listenForNotifications() {
-    FirebaseFirestore.instance
-        .collection('notifications')
-        .where('to', isEqualTo: _userId)
-        .where('status', isEqualTo: 'pending')
-        .snapshots()
-        .listen((snapshot) {
-      for (var doc in snapshot.docChanges) {
-        if (doc.type == DocumentChangeType.added) {
-          Map<String, dynamic> notificationData = doc.doc.data() as Map<String, dynamic>;
-          
-          // Mostrar notificación local
-          String title = notificationData['title'] ?? '💕';
-          String body = notificationData['body'] ?? '';
-          
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    Icon(Icons.favorite, color: Colors.white),
-                    SizedBox(width: 8),
-                    Expanded(child: Text('$title\n$body')),
-                  ],
-                ),
-                backgroundColor: Colors.pink,
-                duration: Duration(seconds: 3),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-            
-            // Marcar como leída
-            doc.doc.reference.update({'status': 'read'});
-          }
-        }
-      }
-    });
-  }
-
-  // 🔔 Mostrar notificación nativa cuando la app está en background
-  Future<void> _showNativeNotification(String type, String senderName) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-        AndroidNotificationDetails(
-      'amor_app_channel',
-      'Amor App Notifications',
-      channelDescription: 'Notificaciones de abrazos y besos',
-      importance: Importance.high,
-      priority: Priority.high,
-      icon: '@mipmap/ic_launcher',
-      color: Color(0xFFE91E63),
-      enableVibration: true,
-      playSound: true,
-    );
-    
-    const DarwinNotificationDetails iOSPlatformChannelSpecifics =
-        DarwinNotificationDetails(
-      sound: 'default',
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-    
-    const NotificationDetails platformChannelSpecifics = NotificationDetails(
-      android: androidPlatformChannelSpecifics,
-      iOS: iOSPlatformChannelSpecifics,
-    );
-    
-    String title = type == 'abrazo' ? '🤗 ¡Abrazo recibido!' : '💋 ¡Beso recibido!';
-    String body = '$senderName te envió mucho amor 💕';
-    
-    await flutterLocalNotificationsPlugin.show(
-      DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      title,
-      body,
-      platformChannelSpecifics,
-      payload: type,
-    );
-    
-    debugPrint('🔔 Notificación nativa mostrada: $title');
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     super.dispose();
   }
 
   Future<void> _sendMessage(MessageType type) async {
     try {
-      // 🚀 Envío INSTANTÁNEO (nueva implementación)
-      await _sendInstantMessage(type);
-      
-      // 📝 Guardar en historial (como siempre)
       await FirebaseFirestore.instance
           .collection('pairs')
           .doc(widget.pairId)
@@ -1030,62 +627,19 @@ class _MainScreenState extends State<MainScreen>
         'timestamp': FieldValue.serverTimestamp(),
       });
 
-      // 🎯 Efectos visuales
       _showFloatingHeart();
       _pulseController.forward().then((_) => _pulseController.reset());
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Row(
-            children: [
-              Text(type == MessageType.abrazo ? '🤗' : '💋', style: TextStyle(fontSize: 20)),
-              SizedBox(width: 8),
-              Text(type == MessageType.abrazo ? '¡Abrazo enviado!' : '¡Beso enviado!'),
-            ],
-          ),
+          content: Text(type == MessageType.abrazo ? '🤗 ¡Abrazo enviado!' : '💋 ¡Beso enviado!'),
           backgroundColor: Colors.green,
           behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
         ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  // 🚀 Envío instantáneo (sin Apple, sin esperas)
-  Future<void> _sendInstantMessage(MessageType type) async {
-    try {
-      // 📨 Crear notificación instantánea
-      await FirebaseFirestore.instance
-          .collection('pairs')
-          .doc(widget.pairId)
-          .collection('instant_notifications')
-          .add({
-        'type': type.name,
-        'senderId': _userId,
-        'receiverId': widget.partnerId,
-        'senderName': widget.userName,
-        'timestamp': FieldValue.serverTimestamp(),
-        'status': 'pending',
-        'method': 'instant_websocket', // 🚀 Método instantáneo
-      });
-      
-      debugPrint('🚀 Mensaje instantáneo enviado: ${type.name}');
-      
-      // 📱 Feedback inmediato
-      HapticFeedback.mediumImpact();
-      
-    } catch (e) {
-      debugPrint('❌ Error enviando mensaje instantáneo: $e');
-      // El sistema instantáneo es nuestro único método ahora
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ Error enviando mensaje'),
-          backgroundColor: Colors.red,
-        ),
       );
     }
   }
@@ -1310,7 +864,7 @@ class _MainScreenState extends State<MainScreen>
 class _AnimatedHeart extends StatefulWidget {
   final VoidCallback onEnd;
 
-  const _AnimatedHeart({super.key, required this.onEnd});
+  const _AnimatedHeart({required this.onEnd});
 
   @override
   _AnimatedHeartState createState() => _AnimatedHeartState();
