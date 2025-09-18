@@ -776,6 +776,8 @@ class _MainScreenState extends State<MainScreen>
   late AnimationController _pulseController;
   String? _userId;
   bool _isAppInBackground = false;
+  int _currentTabIndex = 0; // 💬 Índice de navegación
+  final PageController _pageController = PageController(); // 📱 Controlador de páginas
 
   @override
   void initState() {
@@ -1010,6 +1012,7 @@ class _MainScreenState extends State<MainScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -1202,7 +1205,7 @@ class _MainScreenState extends State<MainScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('💕 ${widget.userName}'),
+        title: Text(_currentTabIndex == 0 ? '💕 ${widget.userName}' : '💬 Chat'),
         backgroundColor: Color(0xFFE91E63),
         foregroundColor: Colors.white,
         elevation: 0,
@@ -1221,10 +1224,57 @@ class _MainScreenState extends State<MainScreen>
           ),
         ],
       ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: (index) {
+          setState(() {
+            _currentTabIndex = index;
+          });
+        },
+        children: [
+          // 💕 Página principal (abrazos y besos)
+          _buildMainPage(),
+          
+          // 💬 Página de chat
+          _buildChatPage(),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentTabIndex,
+        onTap: (index) {
+          setState(() {
+            _currentTabIndex = index;
+          });
+          _pageController.animateToPage(
+            index,
+            duration: Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
+        },
+        backgroundColor: Colors.white,
+        selectedItemColor: Color(0xFFE91E63),
+        unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed,
+        items: [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.favorite),
+            label: 'Amor',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.chat_bubble),
+            label: 'Chat',
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 💕 Página principal original
+  Widget _buildMainPage() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [Color(0xFFFFE4E8), Color(0xFFFFF8F8)],
           ),
@@ -1302,8 +1352,314 @@ class _MainScreenState extends State<MainScreen>
             ..._floatingHearts,
           ],
         ),
+      );
+  }
+
+  // 💬 Página de chat en tiempo real
+  Widget _buildChatPage() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFFFE4E8), Color(0xFFFFF8F8)],
+        ),
+      ),
+      child: Column(
+        children: [
+          // 💬 Lista de mensajes
+          Expanded(
+            child: _buildChatMessages(),
+          ),
+          // ⌨️ Área de input
+          _buildMessageInput(),
+        ],
       ),
     );
+  }
+
+  // 💬 StreamBuilder para mensajes del chat
+  Widget _buildChatMessages() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('pairs')
+          .doc(widget.pairId)
+          .collection('chat_messages')
+          .orderBy('timestamp', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text('Error: ${snapshot.error}', style: TextStyle(color: Colors.red)),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(
+            child: CircularProgressIndicator(color: Color(0xFFE91E63)),
+          );
+        }
+
+        final messages = snapshot.data?.docs ?? [];
+        
+        if (messages.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('💕', style: TextStyle(fontSize: 60)),
+                SizedBox(height: 16),
+                Text(
+                  '¡Envía tu primer mensaje de amor!',
+                  style: TextStyle(
+                    fontSize: 18,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          reverse: true,
+          padding: EdgeInsets.all(16),
+          itemCount: messages.length,
+          itemBuilder: (context, index) {
+            final message = messages[index].data();
+            final isMe = message['senderId'] == _userId;
+            return _buildMessageBubble(message, isMe);
+          },
+        );
+      },
+    );
+  }
+
+  // 💬 Burbuja de mensaje individual
+  Widget _buildMessageBubble(Map<String, dynamic> message, bool isMe) {
+    final messageText = message['text'] ?? '';
+    final timestamp = message['timestamp'] as Timestamp?;
+    final timeString = timestamp != null 
+        ? '${timestamp.toDate().hour.toString().padLeft(2, '0')}:${timestamp.toDate().minute.toString().padLeft(2, '0')}'
+        : '';
+
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (!isMe) ...[
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: Color(0xFFE91E63),
+              child: Text(
+                widget.userName[0].toUpperCase(),
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+            SizedBox(width: 8),
+          ],
+          Flexible(
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: isMe ? Color(0xFFE91E63) : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.2),
+                    blurRadius: 5,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    messageText,
+                    style: TextStyle(
+                      color: isMe ? Colors.white : Colors.black87,
+                      fontSize: 16,
+                    ),
+                  ),
+                  if (timeString.isNotEmpty) ...[
+                    SizedBox(height: 4),
+                    Text(
+                      timeString,
+                      style: TextStyle(
+                        color: isMe ? Colors.white70 : Colors.grey[600],
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          if (isMe) SizedBox(width: 40),
+        ],
+      ),
+    );
+  }
+
+  // ⌨️ Área de input para escribir mensajes
+  Widget _buildMessageInput() {
+    final TextEditingController _messageController = TextEditingController();
+    
+    return Container(
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.2),
+            blurRadius: 10,
+            offset: Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // 😊 Botón de emojis románticos
+          IconButton(
+            onPressed: () => _showRomanticEmojis(_messageController),
+            icon: Icon(Icons.favorite, color: Color(0xFFE91E63)),
+            tooltip: 'Emojis románticos',
+          ),
+          // ⌨️ Campo de texto
+          Expanded(
+            child: TextField(
+              controller: _messageController,
+              decoration: InputDecoration(
+                hintText: 'Escribe un mensaje de amor...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(25),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: Colors.grey[100],
+                contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
+              maxLines: null,
+              textCapitalization: TextCapitalization.sentences,
+            ),
+          ),
+          SizedBox(width: 8),
+          // 📤 Botón enviar
+          Container(
+            decoration: BoxDecoration(
+              color: Color(0xFFE91E63),
+              borderRadius: BorderRadius.circular(25),
+            ),
+            child: IconButton(
+              onPressed: () => _sendChatMessage(_messageController.text, _messageController),
+              icon: Icon(Icons.send, color: Colors.white),
+              tooltip: 'Enviar mensaje',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 😊 Mostrar panel de emojis románticos
+  void _showRomanticEmojis(TextEditingController controller) {
+    final romanticEmojis = ['💕', '💖', '💗', '💝', '💘', '💞', '💓', '💋', '😘', '🥰', '😍', '🤗', '🌹', '🌺', '🦋', '✨'];
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '💕 Emojis Románticos',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFFE91E63),
+              ),
+            ),
+            SizedBox(height: 16),
+            GridView.builder(
+              shrinkWrap: true,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 8,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: romanticEmojis.length,
+              itemBuilder: (context, index) {
+                return GestureDetector(
+                  onTap: () {
+                    controller.text += romanticEmojis[index];
+                    Navigator.pop(context);
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.pink[50],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Center(
+                      child: Text(
+                        romanticEmojis[index],
+                        style: TextStyle(fontSize: 24),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 📤 Enviar mensaje del chat
+  Future<void> _sendChatMessage(String text, TextEditingController controller) async {
+    if (text.trim().isEmpty) return;
+    
+    try {
+      // 📝 Guardar mensaje en Firestore
+      await FirebaseFirestore.instance
+          .collection('pairs')
+          .doc(widget.pairId)
+          .collection('chat_messages')
+          .add({
+        'text': text.trim(),
+        'senderId': _userId,
+        'senderName': widget.userName,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'text',
+      });
+      
+      // 🧹 Limpiar campo de texto
+      controller.clear();
+      
+      // 📱 Feedback haptic
+      HapticFeedback.lightImpact();
+      
+      debugPrint('💬 Mensaje enviado: $text');
+      
+    } catch (e) {
+      debugPrint('❌ Error enviando mensaje: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Error enviando mensaje'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 }
 

@@ -38,5 +38,24 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # Workaround: Some gRPC pods reference a PrivacyInfo.xcprivacy at a path
+    # that doesn't exist in the packaged pod, causing Xcode build failures.
+    # Remove those missing resources from the copy resources phase.
+    next unless ['gRPC-C++', 'gRPC-Core'].include?(target.name)
+
+    # Only PBXNativeTarget has build phases we can iterate this way
+    if target.respond_to?(:build_phases)
+      target.build_phases.each do |phase|
+        next unless phase.respond_to?(:isa) && phase.isa == 'PBXResourcesBuildPhase'
+        phase.files.each do |build_file|
+          ref = build_file.file_ref
+          path = (ref && ref.respond_to?(:path)) ? ref.path : nil
+          if path && path.end_with?('PrivacyInfo.xcprivacy')
+            phase.remove_file_reference(ref)
+          end
+        end
+      end
+    end
   end
 end
