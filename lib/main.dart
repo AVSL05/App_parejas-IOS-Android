@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:math';
 import 'dart:async';
 import 'firebase_options.dart';
@@ -14,16 +15,34 @@ import 'firebase_options.dart';
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = 
     FlutterLocalNotificationsPlugin();
 
+// 🔔 Handler para mensajes en background/terminated
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  // Inicializar Firebase si es necesario en background
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  debugPrint('🔔 Mensaje FCM en background: ${message.messageId}');
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  
-  // 🔔 Inicializar notificaciones locales
-  await _initializeLocalNotifications();
-  
+  // Registrar handler de background para FCM
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // Arrancar UI lo antes posible
   runApp(MyApp());
+
+  // Inicializaciones no bloqueantes (tras mostrar UI)
+  // Nota: evitar pedir permisos antes de montar la UI para no congelar la pantalla.
+  // Ejecutamos en microtask para no bloquear el frame inicial
+  // ignore: discarded_futures
+  Future.microtask(() async {
+    await _safeInitServices();
+  });
 }
 
 // 🔔 Configurar notificaciones locales
@@ -52,6 +71,66 @@ Future<void> _initializeLocalNotifications() async {
   );
 }
 
+// 🔧 Inicialización segura y diferida de servicios (Local Notifications + FCM)
+Future<void> _safeInitServices() async {
+  try {
+    await _initializeLocalNotifications();
+  } catch (e, st) {
+    debugPrint('❌ Error init LocalNotifications: $e\n$st');
+  }
+  try {
+    await _initializeFirebaseMessaging();
+  } catch (e, st) {
+    debugPrint('❌ Error init FCM: $e\n$st');
+  }
+}
+
+// 🔔 Configurar Firebase Cloud Messaging
+Future<void> _initializeFirebaseMessaging() async {
+  final messaging = FirebaseMessaging.instance;
+  // Solicitar permisos en iOS/macOS
+  final settings = await messaging.requestPermission(
+    alert: true,
+    announcement: false,
+    badge: true,
+    carPlay: false,
+    criticalAlert: false,
+    provisional: false,
+    sound: true,
+  );
+  debugPrint('🔔 Permisos FCM: ${settings.authorizationStatus}');
+
+  // Mostrar notificaciones cuando la app está en foreground (iOS)
+  // Desactivar por completo la presentación en primer plano
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: false,
+    badge: false,
+    sound: false,
+  );
+
+  // Obtener y registrar token
+  final token = await messaging.getToken();
+  debugPrint('🔔 FCM Token: $token');
+  final user = FirebaseAuth.instance.currentUser;
+  if (user != null && token != null) {
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .set({'fcmTokens': FieldValue.arrayUnion([token])}, SetOptions(merge: true));
+  }
+
+  // Manejar refresh de token
+  FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .set({'fcmTokens': FieldValue.arrayUnion([newToken])}, SetOptions(merge: true));
+    }
+  });
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -78,7 +157,28 @@ class AuthWrapper extends StatelessWidget {
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(child: CircularProgressIndicator());
+          return Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          return Scaffold(
+            body: Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.red, size: 48),
+                    SizedBox(height: 12),
+                    Text('Error de autenticación', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    SizedBox(height: 8),
+                    Text('${snapshot.error}', textAlign: TextAlign.center),
+                  ],
+                ),
+              ),
+            ),
+          );
         }
         
         if (snapshot.hasData) {
@@ -928,41 +1028,16 @@ class _MainScreenState extends State<MainScreen>
 
   // Escuchar notificaciones push entrantes
   void _listenForNotifications() {
-    FirebaseFirestore.instance
-        .collection('notifications')
-        .where('to', isEqualTo: _userId)
-        .where('status', isEqualTo: 'pending')
-        .snapshots()
-        .listen((snapshot) {
-      for (var doc in snapshot.docChanges) {
-        if (doc.type == DocumentChangeType.added) {
-          Map<String, dynamic> notificationData = doc.doc.data() as Map<String, dynamic>;
-          
-          // Mostrar notificación local
-          String title = notificationData['title'] ?? '💕';
-          String body = notificationData['body'] ?? '';
-          
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    Icon(Icons.favorite, color: Colors.white),
-                    SizedBox(width: 8),
-                    Expanded(child: Text('$title\n$body')),
-                  ],
-                ),
-                backgroundColor: Colors.pink,
-                duration: Duration(seconds: 3),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-            
-            // Marcar como leída
-            doc.doc.reference.update({'status': 'read'});
-          }
-        }
-      }
+    // No mostrar notificaciones cuando la app está en primer plano
+    // (el sistema solo notificará cuando esté en background/terminated).
+
+    // Mensajes tocados al abrir desde notificación
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      debugPrint('🔔 Notificación abierta desde background: ${message.messageId}');
+      setState(() {
+        _currentTabIndex = 1; // Ir al chat
+      });
+      _pageController.jumpToPage(1);
     });
   }
 
@@ -1523,12 +1598,6 @@ class _MainScreenState extends State<MainScreen>
       ),
       child: Row(
         children: [
-          // 😊 Botón de emojis románticos
-          IconButton(
-            onPressed: () => _showRomanticEmojis(_messageController),
-            icon: Icon(Icons.favorite, color: Color(0xFFE91E63)),
-            tooltip: 'Emojis románticos',
-          ),
           // ⌨️ Campo de texto
           Expanded(
             child: TextField(
@@ -1565,66 +1634,6 @@ class _MainScreenState extends State<MainScreen>
     );
   }
 
-  // 😊 Mostrar panel de emojis románticos
-  void _showRomanticEmojis(TextEditingController controller) {
-    final romanticEmojis = ['💕', '💖', '💗', '💝', '💘', '💞', '💓', '💋', '😘', '🥰', '😍', '🤗', '🌹', '🌺', '🦋', '✨'];
-    
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        padding: EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '💕 Emojis Románticos',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFFE91E63),
-              ),
-            ),
-            SizedBox(height: 16),
-            GridView.builder(
-              shrinkWrap: true,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 8,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
-              itemCount: romanticEmojis.length,
-              itemBuilder: (context, index) {
-                return GestureDetector(
-                  onTap: () {
-                    controller.text += romanticEmojis[index];
-                    Navigator.pop(context);
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.pink[50],
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Center(
-                      child: Text(
-                        romanticEmojis[index],
-                        style: TextStyle(fontSize: 24),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   // 📤 Enviar mensaje del chat
   Future<void> _sendChatMessage(String text, TextEditingController controller) async {
     if (text.trim().isEmpty) return;
@@ -1641,6 +1650,21 @@ class _MainScreenState extends State<MainScreen>
         'senderName': widget.userName,
         'timestamp': FieldValue.serverTimestamp(),
         'type': 'text',
+      });
+
+      // 🔔 Crear notificación dirigida a la pareja (para FCM)
+      await FirebaseFirestore.instance
+          .collection('notifications')
+          .add({
+        'to': widget.partnerId,
+        'title': 'Nuevo mensaje 💬',
+        'body': text.trim(),
+        'type': 'chat_message',
+        'senderId': _userId,
+        'senderName': widget.userName,
+        'pairId': widget.pairId,
+        'timestamp': FieldValue.serverTimestamp(),
+        'status': 'pending', // Cloud Function enviará push y cambiará a 'sent'
       });
       
       // 🧹 Limpiar campo de texto
